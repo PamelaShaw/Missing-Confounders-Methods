@@ -21,7 +21,13 @@ The full set of experiments was originally run on several Windows Virtual machin
 
 ## Reproducing results for the synthetic base case simulation: 12% outcome proportion, 40% missing-data proportion, simple outcome model and simple MAR missingness
 
-The provided file `run_simple_outcome_simple_MAR.bat` can be used to reproduce the results for this scenario. Run this code from the `sims/` subdirectory.
+The provided file `run_simple_outcome_simple_MAR.bat` can be used to reproduce the results for this scenario. Run this code from the `sims/` subdirectory: from the Windows command prompt within the `sims/` directory, enter
+
+```{cmd}
+run_simple_outcome_simple_MAR.bat
+```
+
+which will run the simulation.
 
 Specifically, the `.bat` file sets `yscenario=1.1` and `mscenario=1.1`, then runs the simulation for 2500 replications for each of the following estimators: 
 * `cc_oracle`: the oracle estimator, which uses the true data-generating outcome model and can access the confounder data for all observations (i.e., there is no missing data)
