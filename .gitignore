@@ -1,0 +1,6 @@
+sims/*.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+sims/Results/*
+sims/*.Rproj
