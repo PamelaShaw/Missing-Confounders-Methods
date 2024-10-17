@@ -15,7 +15,7 @@ library("dplyr")
 
 # Introduction
 
-The purpose of this vignette is to demonstrate how to use targeted maximum likelihood estimation (also targeted minimum loss-based estimation, or TMLE [@vanderlaan2006targeted;@vanderlaan2011targeted]) to estimate and make inference (e.g., compute 95% confidence intervals) on binary treatment effects in an observational study setting when data on key confounders are subject to missingness. We consider a setting where some study participants have missing values of a key confounding variable. We consider four targets of inference: the marginal risk difference (mRD), marginal relative risk (mRR), marginal odds ratio (mOR), and conditional odds ratio (cOR). Below, we describe these estimands in more detail. Finally, we conclude with a demonstration using the `tmle` `R` package version `r suppressWarnings(packageVersion("tmle"))` [@gruber2012tmle] to compute point estimates and 95% confidence intervals for each estimand. In this demonstration, we will compare two versions of the TMLE: a simple version that only uses machine learning to address missing data, that we call "TMLE-M" (and use for illustration); and a more complex version that uses machine learning in all aspects of estimation, that we call "TMLE-MTO" (which we recommend in most situations). This vignette was created using `R` version `r paste0(R.version$major, ".", R.version$minor)`; for more information about the `R` session, see Section \@ref(sec-session-info). As of 2024-09-05, there is a new `R` package `twoStageDesignTMLE` [@twoStageDesignTMLEpkg] that can also perform the functionality that we demonstrate here, without the explicit need for utility functions that we include here. We are currently testing this package to ensure that it gives identical results, and will update this vignette once the testing is complete.
+The purpose of this vignette is to demonstrate how to use targeted maximum likelihood estimation (also targeted minimum loss-based estimation, or TMLE [@vanderlaan2006targeted;@vanderlaan2011targeted]) to estimate and make inference (e.g., compute 95% confidence intervals) on binary treatment effects in an observational study setting when data on key confounders are subject to missingness. We consider a setting where some study participants have missing values of a key confounding variable. We consider four targets of inference: the marginal risk difference (mRD), marginal relative risk (mRR), marginal odds ratio (mOR), and conditional odds ratio (cOR). Below, we describe these estimands in more detail. Finally, we conclude with a demonstration using the `twoStageDesignTMLE` `R` package version `r suppressWarnings(packageVersion("twoStageDesignTMLE"))` [@twoStageDesignTMLEpkg;@gruber2012tmle] to compute point estimates and 95% confidence intervals for each estimand. In this demonstration, we will compare two versions of the TMLE: a simple version that only uses machine learning to address missing data, that we call "TMLE-M" (and use for illustration); and a more complex version that uses machine learning in all aspects of estimation, that we call "TMLE-MTO" (which we recommend in most situations). This vignette was created using `R` version `r paste0(R.version$major, ".", R.version$minor)`; for more information about the `R` session, see Section \@ref(sec-session-info). 
 
 # Generating data
 
@@ -148,10 +148,10 @@ It is relatively straightforward to obtain estimates of marginal parameters (e.g
 ## Estimating conditional parameters
 Finally, we describe our approach for estimating the conditional odds ratio using TMLE. Suppose that our working logistic regression model is $\logit E(Y \mid X = x, Z = z, W = w) = \beta_0 + \beta_1 x + \beta_2 z + \beta_3 w$, as defined above. The cOR $\exp(\beta_1)$ can be expressed as the parameter in a working model known as a _marginal structural model_ [@robins2000marginal;@gruber2012tmle]. If the marginal structural model is misspecified (i.e., the true conditional mean function is not linear in the variables on the logit scale), then the cOR parameter $\exp(\beta_1)$ can be viewed as the projection of the true causal effect parameter onto the working model [@gruber2012tmle]. In this vignette, we specify as marginal structural model (MSM) the working logistic regression model described above. 
 
-# Using the `tmle` package
+# Using the `twoStageDesignTMLE` package
 
 ## Defining key data objects and possible candidate learners
-First, we set up some data objects for the `tmle` package. The main object is a `data.frame` of the confounder(s) that are prone to missingness (here, just $W$) _with no missing data_. Importantly, in the syntax of the `tmle` package, `"A"` refers to the exposure (our $X$) and `"W"` refers to the complete set of confounders (our $(W,Z)$).
+First, we set up some data objects for the `twoStageDesignTMLE` package. The main object is a `data.frame` of the confounder(s) that are prone to missingness (here, just $W$) _with no missing data_. Importantly, in the syntax of the `tmle` package, `"A"` refers to the exposure (our $X$) and `"W"` refers to the complete set of confounders (our $(W,Z)$).
 
 ```{r data-setup-for-tmle}
 # get the values of W for participants who have no missing data
@@ -168,11 +168,13 @@ library("SuperLearner")
 library("glmnet") 
 library("xgboost") 
 library("ranger") 
-library("tmle")
+library("twoStageDesignTMLE")
 
 # gradient boosted trees, from package xgboost 
-# set up a list of tuning parameters with varying maximum tree depth and shrinkage rate
-xgb_tune_params <- list(max_depth = c(1, 3), shrinkage = c(1e-2, 1e-1), ntrees = 500)
+# set up a list of tuning parameters with varying maximum tree depth and 
+# shrinkage rate
+xgb_tune_params <- list(max_depth = c(1, 3), shrinkage = c(1e-2, 1e-1), 
+                        ntrees = 500)
 
 # random forests, from package ranger
 # set up a list of tuning parameters with varying minimum node size
@@ -180,484 +182,25 @@ n <- nrow(data)
 min_node_sizes <- round(seq.int(n / 100, n / 10, length.out = 4))
 rf_tune_params <- list(num.trees = 500, min.node.size = min_node_sizes,
                        verbose = FALSE)
-# create all possible boosted tree and RF learners based on the tuning parameters
-# specified above
+# create all possible boosted tree and RF learners based on the tuning 
+# parameters specified above
 xgb_learners <- create.Learner("SL.xgboost", tune = xgb_tune_params, 
                                detailed_names = TRUE, name_prefix = "xgb")
 rf_learners <- create.Learner("SL.ranger", tune = rf_tune_params, 
                               detailed_names = TRUE, name_prefix = "rf")
-```
-
-Prior to running the code in the next sections, you will need several utility functions. We have placed these in the Appendix at the end of this document. If you are accessing this vignette in R Markdown, you can load in the utility functions now. If you are accessing this vignette as a PDF, you will need to run the code in the Appendix before continuing. (this section is currently under development, because the `twoStageDesignTMLE` package removes the need to load these utility functions)
-
-
-```{r utils, include = FALSE, echo = FALSE}
-# utility functions for subcalTMLE ---------------------------------------------
-#--------------------------------------------------------------------------
-# Susan Gruber
-# sgruber@TLrevolution.com
-# August 10, 2023
-
-# functions for implementing a TMLE for subset calibration
-# (based  on two-stage TMLE Rose&vanderLaan, 2011)
-# that evaluates a point treatment effect or the marginal mean outcome for a
-# single arm study using a 2-stage sampling design
-#
-# For a two-arm study the full data consists of baseline covariates X, and 
-# potential outcomes Y0, Y1. Observed data consists of 
-# baseline covariates (W, Delta.W, Delta.W W'), treatment A, 
-# outcome (Delta, Delta Y), where covariates X can be divided into two sets: 
-# W measured on everyone, and W' measured on only a subset of individuals.  
-# Delta.W is an indicator of being in the selected subset. 
-# A is a unary (single-arm study) or binary treatment indicator, Delta indicates
-# whether the outcome is measured and DeltaY is the outcome value 
-# (when Delta = 1), otherwise missing.
-
-# The functions defined below take an initial observed dataset and transform it 
-# into a suitable representation for applying targeted maximum likelihood 
-# estimation (TMLE) using the tmle package (>= 2.0.0). 
-# Marginal parameter estimates (ATE/RD, RR, OR) can be obtained by calling 
-# the tmle function.
-# Conditional parameter estimates are obtained by calling the tmleMSM function. 
-# Note this requires specifying the desired MSM. Data on observations in the 
-# subset are passed in to these functions, along with sampling weights that 
-# account for the possibly biased selection into the sample.
-#
-# Step 1. Simple imputation of miscellaneous missing values in W + augment W 
-#       with binary indicators of which values were present/absent
-# Step 2. Construct inverse probability of censoring weights to pass into the 
-#         tmle or tmleMSM functions
-# 	2a. Model conditional probability of being included in the subset using 
-#       SuperLearner or logistic regression.
-# 	2b. Construct IP weights
-# Step 3. Call the tmle or tmleMSM function to evaluate the parameter, estimate 
-#         variance and CI bounds using influence curve-based inference.  
-#         Optionally, the tmle function can also provide targeted
-#         bootstrap-based variance estimates (recommended when there are near 
-#         positivity violations).
-#--------------------------------------------------------------------------
-
-# For NOW - no missing data allowed in W, W.sub
-#-------------------------------
-# Utilities
-summary.subcal <- function(object, ...) {
-  if (!is.null(object$coef)) {
-    picoef <- object$coef
-    if (inherits(picoef, "matrix")) {
-      piterms <- colnames(picoef)
-    } else {
-      piterms <- names(picoef)
-    }
-    pimodel <- paste("Delta.W ~ 1")
-    if (length(piterms) > 1) {
-      pimodel <- paste("Delta.W ~ ", paste(piterms, collapse = " + "))
-    }
-  } else {
-    pimodel <- piterms <- picoef <- NULL
-  }
-  return(list(
-    pimodel = pimodel, piterms = piterms, picoef = picoef, pitype = object$type,
-    pidiscreteSL = object$discreteSL
-  ))
-}
-
-print.summary.subcalTMLE <- function(x, ...) {
-  if (inherits(x, "summary.subcalTMLE")) {
-    cat("\n Estimation of Pi (subset sampling mechanism)\n")
-    cat("\t Procedure:", x$subcal$pitype)
-    if (!(is.null(x$subcal$pidiscreteSL))) {
-      if (x$subcal$pidiscreteSL) {
-        cat(", discrete")
-      } else {
-        cat(", ensemble")
-      }
-    }
-    if (!(is.null(x$subcal$piAUC))) {
-      cat("\t Empirical AUC =", round(x$subcal$piAUC, 4), "\n")
-    }
-    cat("\n")
-    if (!(is.na(x$subcal$picoef[1]))) {
-      cat("\t Model:\n\t\t", x$subcal$pimodel, "\n")
-      cat("\n\t Coefficients: \n")
-      terms <- sprintf("%15s", x$subcal$piterms)
-      extra <- ifelse(x$subcal$picoef >= 0, "  ", " ")
-      for (i in 1:length(x$subcal$picoef)) {
-        cat("\t", terms[i], extra[i], x$subcal$picoef[i], "\n")
-      }
-    }
-    cat("\n")
-    print(x$tmle)
-  }
-}
-
-print.subcalTMLE <- function(x, ...) {
-  cat("Subset calibration TMLE\n")
-  if (inherits(x, "subcalTMLE")) {
-    print(x$tmle)
-  }
-}
-
-summary.subcalTMLE <- function(x, ...) {
-  # summary for estimating Pi here
-  if (inherits(x, "subcalTMLE")) {
-    sum.subcalTMLE <- list()
-    sum.subcalTMLE$subcal <- summary.subcal(x$subcal)
-    sum.subcalTMLE$tmle <- summary(x$tmle)
-    class(sum.subcalTMLE) <- "summary.subcalTMLE"
-    return(sum.subcalTMLE)
-  }
-}
-
-#-----------------------------------------
-# Set the number of cross-validation
-# folds as a function of n.effective
-# See Phillips 2023 doi.org/10.1093/ije/dyad023
-#-----------------------------------------
-setV <- function(n.effective) {
-  if (n.effective <= 30) {
-    V <- n.effective
-  } else if (n.effective <= 500) {
-    V <- 20
-  } else if (n.effective <= 1000) {
-    V <- 10
-  } else if (n.effective <= 10000) {
-    V <- 5
-  } else {
-    V <- 2
-  }
-  return(V)
-}
-
-
-#----------------
-# construct column names
-#-----------------
-.getColNames <- function(condSetNames, Wnames, Vnames = NULL) {
-  orig.colnames <- NULL
-  for (i in 1:length(condSetNames)) {
-    # if (condSetNames[i] %in% c("A", "Y")) {
-    if (condSetNames[i] == "A") {
-      orig.colnames <- c(orig.colnames, condSetNames[i])
-    } else if (condSetNames[i] == "Y") {
-      orig.colnames <- c(orig.colnames, "real_Y")
-    } else if (condSetNames[i] == "W") {
-      orig.colnames <- c(orig.colnames, Wnames)
-    } else if (condSetNames[i] == "V") {
-      orig.colnames <- c(orig.colnames, Vnames)
-    }
-  }
-  return(orig.colnames)
-}
-
-#-------------------------
-# Function subcalTMLE
-# purpose: subset calibration TMLE
-# Arguments:
-#  	Y : outcome of interest (missingness allowed)
-# 	A : binary treatment indicator
-# 	W : matrix or data.frame of covariates measured on entire population
-# 	Delta.W : Indicator of inclusion in subset with additional information
-# 	W.sub : matrix or data.frame of covariates measured in subset population
-# 			  (in same order as the corresponding rows in W. DO NOT include
-# 			   rows for subjects not included in the subset)
-# 	Z : Only required when the goal is estimating a controlled direct effect
-# 		mediated by a binary variable,Z,  between treatment and outcome
-# 	Delta : binary indicator that outcome Y is observed
-# 	pi : optional vector of sampling probabilities
-# 	piform : optional parametric regression model for estimating pi
-# 	pi.SL.library : optional SL library specification for estimating pi (ignored when piform or pi is provided)
-# 	V.pi : optional number of cross-validation folds for super learning (ignored when piform or pi is provided)
-# 	pi.discreteSL: flag to indicate whether to use ensemble or discrete super learning (ignored when piform or pi is provided)
-# 	condSet : variables to condition on when estimating pi. Covariates in W are always included. Can optionally also
-# 			   condition on A and/or Y.
-# 	id : optional indicator of independent units of observation
-# 	Q.family : "gaussian" or "binomial", used to evaluate the TMLE
-#   augmentW : TRUE to augment W with predicted values when A = 0 and A = 1
-#			   from fitting the outcome regression conditional on A and W on all observations 
-# 	rareOutcome: When true calls TMLE with  V.Q = 20, Q.discreteSL = TRUE,
-#   		   Q.SL.library = c("SL.glm", "SL.glmnet", "tmle.SL.dbarts2")
-# 	verbose : set to TRUE to print out informative messages
-# 	...	other arugments passed to the tmle function (see tmle help files)
-# Return value
-# 	object of class "subcalTMLE" (a list):
-# 	 subcal - a list of details on estimating the conditional sampling probabilities
-# 		pi - predicted probabilities
-# 		coef - coefficients in the parametric model or SL ensemble weights
-# 		type - "user-supplied regression formula" or "Super Learner"
-# 		"discreteSL" - FALSE when ensemble SL used, TRUE when best single algorithm selected
-# 	tmle - results returned from the call to the tmle function with
-# 		   observation weights equal to 1/pi. (class "tmle", see tmle package documentation)
-#-------------------------
-subcalTMLE <- function(Y, A, W, Delta.W, W.sub, Z = NULL, Delta = rep(1, length(Y)), 
-                       pi = NULL, piform = NULL, 
-                       pi.SL.library = c("SL.glm", "SL.gam", "SL.glmnet", 
-                                         "tmle.SL.dbarts.k.5"), 
-                       V.pi = 10, pi.discreteSL = TRUE, condSetNames = c("A", "W"), 
-                       id = NULL, Q.family = "gaussian", augmentW = TRUE, 
-                       rareOutcome = FALSE, verbose = FALSE, ...) {
-  if (!requireNamespace("tmle", versionCheck = ">=2.0", quietly = FALSE)) {
-    stop("Loading required tmle package (>=2.0) failed", call. = FALSE)
+# for two-stage TMLE, need to either specify "Y.orig" on RHS of piform below
+# or create a SL wrapper that also uses "Y.orig" (in this case, for SL.glm)
+SL.glm.twostage <- function(Y, X, newX, family, obsWeights, model = TRUE, 
+                            ...) {
+  # check to see if Y is part of X or newX; change name to "Y.orig"
+  contains_Y <- (names(X) == "Y")
+  if (any(contains_Y)) {
+    names(X)[contains_Y] <- "Y.orig"
   }
   
-  if (is.null(id)) {
-    id <- 1:length(Y)
-  }
-  
-  if (is.vector(W.sub)) {
-    W.sub <- as.matrix(W.sub)
-    colnames(W.sub) <- "W.sub"
-  }
-  
-  # if augmenting W call TMLE to get initial estimate of Q in full sample	
-  # do this through the tmle function to get cross-validated initial estimates
-  # that are not overfit to the data and are appropriately bounded
-  if (augmentW) {
-    L <- list(...)
-    n.effective <- sum(Delta)
-    if (Q.family == "binomial") {
-      n.effective <- min(c(table(Y[Delta == 1]) * 5, n.effective))
-    }
-    V.Q <- setV(n.effective)
-    d.g <- data.frame(Y = Y, mget(condSetNames))
-    W.g <- tmle:::estimateG(d = d.g, gform = "A ~ .", SL.library = "SL.glm", 
-                            outcome = "A", message = "treatment assigment probability",
-                            g1W = NULL, V = V.pi, discreteSL = TRUE,
-                            id = id, obsWeights = rep(1, nrow(W)), verbose = verbose)
-    W.Q <- tmle(Y, A, W, Z=Z, Delta = Delta, id = id, family = Q.family,
-                g1W = W.g$g1W, pDelta1 = cbind(A0 = rep(1,n), A1 = rep(1,n)),
-                V.Q = V.Q, Q.SL.library = L$Q.SL.library,
-                Q.discreteSL = TRUE)$Qinit$Q
-    colnames(W.Q) <- c("W.Q0", "W.Q1")			
-  } else {
-    W.Q <- NULL
-  }
-  
-  # Evaluate conditional sampling probabilities
-  if (is.null(pi)) {
-    validCondSetNames <- c("A", "W", "Y")
-    if (!(all(condSetNames %in% validCondSetNames))) {
-      stop("condSetNames must be any combination of 'A', 'W', 'Y'")
-    }
-    if (any(condSetNames == "Y")) {
-      if (any(is.na(Y))) {
-        stop("Cannot condition on the outcome to evaluate sampling probabilities when some outcome values are missing")
-      }
-    }
-    
-    if (is.null(W.Q)) {
-      d.pi <- data.frame(Delta.W = Delta.W, mget(condSetNames))
-      colnames(d.pi)[-1] <- .getColNames(condSetNames, Wnames = colnames(W))
-    } else {
-      d.pi <- data.frame(Delta.W = Delta.W, mget(condSetNames), W.Q)
-      colnames(d.pi)[-c(1, tail(1:ncol(d.pi), n = 2L))] <- .getColNames(condSetNames, Wnames = colnames(W))
-    }
-    res.subcal <- tmle:::estimateG(
-      d = d.pi, g1W = NULL, gform = piform, SL.library = pi.SL.library,
-      id = id, V = V.pi, message = "sampling weights", outcome = "Delta.W", discreteSL = pi.discreteSL,
-      obsWeights = rep(1, nrow(W)), verbose = verbose
-    )
-    names(res.subcal)[1] <- "pi"
-  } else {
-    res.subcal <- list()
-    res.subcal$pi <- pi
-    res.subcal$type <- "User supplied values"
-    res.subcal$coef <- NA
-    res.subcal$discreteSL <- NULL
-  }
-  
-  # Now bound normalized obsWeights after rescaling so they sum to sum(Delta.W)
-  obsWeights <- Delta.W / res.subcal$pi
-  obsWeights <- obsWeights / sum(obsWeights) * sum(Delta.W)
-  ub <- sqrt(sum(Delta.W)) * log(sum(Delta.W)) / 5
-  obsWeights <- tmle:::.bound(Delta.W/res.subcal$pi, c(0, ub))
-  
-  # call TMLE on fully-observed data
-  argList <- list(...)
-  argList$Y <- Y[Delta.W == 1]
-  argList$A <- A[Delta.W == 1] 
-  if (augmentW) {
-    argList$W <- cbind(W[Delta.W == 1, , drop = FALSE], W.Q[Delta.W == 1, ], W.sub)
-  } else {
-    argList$W <- cbind(W[Delta.W == 1, , drop = FALSE], W.sub)
-  }
-  argList$Z <- Z[Delta.W == 1]
-  argList$Delta <- Delta[Delta.W == 1]
-  argList$obsWeights <- obsWeights[Delta.W == 1]
-  argList$id <- id[Delta.W == 1]
-  argList$family <- Q.family
-  argList$verbose <- verbose
-  if (rareOutcome){
-    argList$Q.SL.library <- c("SL.glm", "SL.glmnet", "tmle.SL.dbarts2") 
-    argList$Q.discreteSL <- TRUE
-    argList$V.Q <- 20
-  }
-  result <- list()
-  result$tmle <- try(do.call(tmle, argList))
-  if (inherits(result$tmle, "try-error")) {
-    cat("Error calling tmle. Estimated sampling probabilites are being returned")
-    result$tmle <- NULL
-  }
-  result$subcal <- res.subcal
-  result$augW <- W.Q
-  class(result) <- "subcalTMLE" # for tmleMSM can use same class
-  return(result)
-}
-
-
-#-------------------------
-# Function subcalTMLEMSM
-# purpose: subset calibration TMLE for conditional effects
-# Arguments:
-#  	Y : outcome of interest (missingness allowed)
-# 	A : binary treatment indicator
-# 	W : matrix or data.frame of covariates measured on entire population
-# 	Delta.W : Indicator of inclusion in subset with additional information
-# 	W.sub : matrix or data.frame of covariates measured in subset population
-# 			  (in same order as the corresponding rows in W. DO NOT include
-# 			   rows for subjects not included in the subset)
-# 	Z : Only required when the goal is estimating a controlled direct effect
-# 		mediated by a binary variable,Z,  between treatment and outcome
-# 	Delta : binary indicator that outcome Y is observed
-# 	pi : optional vector of sampling probabilities
-# 	piform : optional parametric regression model for estimating pi
-# 	pi.SL.library : optional SL library specification for estimating pi (ignored when piform or pi is provided)
-# 	V.pi : optional number of cross-validation folds for super learning (ignored when piform or pi is provided)
-# 	pi.discreteSL: flag to indicate whether to use ensemble or discrete super learning (ignored when piform or pi is provided)
-# 	condSet : variables to condition on when estimating pi. Covariates in W are always included. Can optionally also
-# 			   condition on A and/or Y.
-# 	id : optional indicator of independent units of observation
-# 	Q.family : "gaussian" or "binomial", used to evaluate the TMLE
-#   augmentW : TRUE to augment W with predicted values when A = 0 and A = 1
-#			   from fitting the outcome regression conditional on A and W on all observations 
-# 	rareOutcome: set to TRUE to automatically set V.Q = 20, Q.discreteSL = TRUE, and
-# 		Q.SL.library = glm, glmnet, bart
-# 	verbose : set to TRUE to print out informative messages
-# 	...	other arugments passed to the tmleMSM function (see tmleMSM documentation in the tmle package)
-# Return value
-# 	object of class "subcalTMLE" (a list):
-# 	 subcal - a list of details on estimating the conditional sampling probabilities
-# 		pi - predicted probabilities
-# 		coef - coefficients in the parametric model or SL ensemble weights
-# 		type - "user-supplied regression formula" or "Super Learner"
-# 		"discreteSL" - FALSE when ensemble SL used, TRUE when best single algorithm selected
-# 	tmle - results returned from the call to the tmleMSM function with
-# 		   observation weights equal to 1/pi. (class "tmleMSM", see tmle package documentation)
-#-------------------------
-
-subcalTMLEMSM <- function(Y, A, W, V, Delta.W, W.sub, Delta = rep(1, length(Y)),
-                          pi = NULL, piform = NULL,
-                          pi.SL.library = c("SL.glm", "SL.gam", "SL.glmnet", 
-                                            "tmle.SL.dbarts.k.5"), 
-                          V.pi = 10, pi.discreteSL = TRUE, condSetNames = c("A", "W"), 
-                          id = NULL, Q.family = "gaussian", augmentW = TRUE, 
-                          rareOutcome = FALSE, verbose = FALSE, ...) {
-  if (!requireNamespace("tmle", versionCheck = ">=2.0", quietly = FALSE)) {
-    stop("Loading required tmle package (>-2.0) failed", call. = FALSE)
-  }
-  
-  if (is.null(id)) {
-    id <- 1:length(Y)
-  }
-  
-  if (is.vector(W.sub)) {
-    W.sub <- as.matrix(W.sub)
-    colnames(W.sub) <- "W.sub"
-  }
-  
-  if (augmentW) {
-    L <- list(...)
-    
-    n.effective <- sum(Delta)
-    if (Q.family == "binomial") {
-      n.effective <- min(c(table(Y[Delta == 1]) * 5, n.effective))
-    }
-    V.Q <- setV(n.effective)
-    d.g <- data.frame(Y = Y, mget(condSetNames))
-    W.g <- tmle:::estimateG(d = d.g, gform = "A ~ .", SL.library = "SL.glm", 
-                            outcome = "A", message = "treatment assigment probability",
-                            g1W = NULL, V = V.pi, discreteSL = TRUE,
-                            id = id, obsWeights = rep(1, nrow(W)), verbose = verbose)
-    W.Q <- tmle(Y, A, W, Delta = Delta, id = id, family = Q.family, 
-                g1W = W.g$g1W, pDelta1 = cbind(A0 = rep(1,n), A1 = rep(1,n)),
-                V.Q = V.Q, Q.SL.library = L$Q.SL.library,
-                Q.discreteSL = TRUE)$Qinit$Q
-    colnames(W.Q) <- c("W.Q0", "W.Q1")
-  } else {
-    W.Q <- NULL
-  }
-  
-  V <- as.matrix(V)
-  
-  # Evaluate conditional sampling probabilities
-  if (is.null(pi)) {
-    validCondSetNames <- c("A", "V", "W", "Y")
-    if (!(all(condSetNames %in% validCondSetNames))) {
-      stop("condSetNames must be any combination of 'A', 'V', 'W', 'Y'")
-    }
-    if (any(condSetNames == "Y")) {
-      if (any(is.na(Y))) {
-        stop("Cannot condition on the outcome to evaluate sampling probabilities when some outcome values are missing")
-      }
-    }
-    
-    if (is.null(W.Q)) {
-      d.pi <- data.frame(Delta.W = Delta.W, mget(condSetNames))
-      colnames(d.pi)[-1] <- .getColNames(condSetNames, Wnames = colnames(W), Vnames = colnames(V))
-    } else {
-      d.pi <- data.frame(Delta.W = Delta.W, mget(condSetNames), W.Q)
-      colnames(d.pi)[-c(1, tail(1:ncol(d.pi), n = 2L))] <- .getColNames(condSetNames, Wnames = colnames(W), Vnames = colnames(V))
-    }
-    res.subcal <- tmle:::estimateG(
-      d = d.pi, g1W = NULL, gform = piform, SL.library = pi.SL.library,
-      id = id, V = V.pi, message = "sampling weights", outcome = "Delta.W", discreteSL = pi.discreteSL,
-      obsWeights = rep(1, nrow(W)), verbose = verbose
-    )
-    names(res.subcal)[1] <- "pi"
-  } else {
-    res.subcal <- list()
-    res.subcal$pi <- pi
-    res.subcal$type <- "User supplied values"
-    res.subcal$coef <- NA
-    res.subcal$discreteSL <- NULL
-  }
-  
-  # Now bound normalized obsWeights after rescaling so they sum to sum(Delta.W)
-  obsWeights <- Delta.W/res.subcal$pi
-  obsWeights <- obsWeights / sum(obsWeights) * sum(Delta.W)
-  ub <- sqrt(sum(Delta.W)) * log(sum(Delta.W)) / 5
-  obsWeights <- tmle:::.bound(Delta.W/res.subcal$pi, c(0, ub))
-  
-  argList <- list(...)
-  argList$Y <- Y[Delta.W == 1]
-  argList$A <- A[Delta.W == 1] 
-  if (augmentW) {
-    argList$W <- cbind(W[Delta.W == 1, , drop = FALSE], W.Q[Delta.W == 1, ], W.sub)
-  } else {
-    argList$W <- cbind(W[Delta.W == 1, , drop = FALSE], W.sub)
-  }
-  argList$V <- V[Delta.W == 1, , drop = FALSE]
-  argList$Delta <- Delta[Delta.W == 1]
-  argList$obsWeights <- obsWeights[Delta.W == 1]
-  argList$id <- id[Delta.W == 1]
-  argList$family <- Q.family
-  argList$verbose <- verbose
-  if (rareOutcome){
-    argList$Q.SL.library <- c("SL.glm", "SL.glmnet", "tmle.SL.dbarts2") 
-    argList$Q.discreteSL <- TRUE
-    argList$V.Q <- 20
-  }
-  
-  result <- list()
-  result$tmleMSM <- try(do.call(tmleMSM, argList))		
-  
-  if (inherits(result$tmleMSM, "try-error")) {
-    cat("Error calling tmleMSM. Estimated sampling probabilites are being returned")
-    result$tmleMSM <- NULL
-  }
-  result$subcal <- res.subcal
-  result$augW <- W.Q
-  class(result) <- "subcalTMLE" # for tmleMSM can use same class
-  return(result)
+  # fit SL.glm with the new Y names
+  SL.glm(Y = Y, X = X, newX = newX, family = family, obsWeights = obsWeights, 
+         model = model, ...)
 }
 ```
 
@@ -681,17 +224,17 @@ propensity_lib <- "SL.glm"
 propensity_formula <- "A ~ W + Z" 
 # set up Super Learner library for missing-data model; 
 # ranges from simple (glm) to more complex (RFs and boosted trees)
-miss_lib <- c("SL.glm", xgb_learners$names, rf_learners$names)
+miss_lib <- c("SL.glm.twostage", xgb_learners$names, rf_learners$names)
 
 # obtain marginal estimates using TMLE
 set.seed(20240227)
-marginal_tmlem_ests <- subcalTMLE(
+marginal_tmlem_ests <- twoStageTMLE(
   Y = data$Y, A = data$X, 
   # here, W refers to the completely-observed confounders, our "Z"
   W = data[, "Z", drop = FALSE], # need W to be a data.frame
-  # here, W.sub refers to the complete-case sample of missing-prone confounders
-  # (our W)
-  W.sub = obs_W, Delta.W = data$Delta,
+  # here, W.stage2 refers to the complete-case sample of missing-prone 
+  # confounders (our W)
+  W.stage2 = obs_W, Delta.W = data$Delta,
   condSetNames = c("W", "A", "Y"),
   pi.SL.library = miss_lib, V.pi = 10,
   Q.family = "binomial",
@@ -723,22 +266,21 @@ In this code chunk, we use the library of candidate learners defined in the prev
 # again, "A" corresponds to the exposure of interest
 msm_formula <- "A + Z + W_obs"
 set.seed(20240227)
-conditional_tmlem_ests <- subcalTMLEMSM(
+conditional_tmlem_ests <- twoStageTMLEmsm(
   Y = data$Y, A = data$X, 
   # here, W refers to the completely-observed confounders, our "Z"
   W = data[, "Z", drop = FALSE], # need W to be a data.frame
-  # here, W.sub refers to the complete-case sample of missing-prone confounders
+  # here, W.stage2 refers to the complete-case sample of missing-prone confounders
   # (our W)
-  W.sub = obs_W, 
+  W.stage2 = obs_W, 
   # V refers to the variables to condition on in the MSM
-  V = data[, c("X", "Z", "W_obs")], 
-  Delta.W = data$Delta,
+  V = data[, c("X", "Z", "W_obs")], Delta.W = data$Delta,
   MSM = msm_formula, condSetNames = c("W", "A", "Y"),
   pi.SL.library = miss_lib, V.pi = 10,
   Q.family = "binomial",
   Q.SL.library = outcome_regression_lib, V.Q = 10, Qform = outcome_regression_formula,
   g.SL.library = propensity_lib, V.g = 10, gform = propensity_formula,
-  verbose = FALSE
+  augmentW = FALSE, verbose = FALSE
 )
 conditional_tmlem_summary <- summary(conditional_tmlem_ests$tmleMSM)$estimates[, 1:3]
 conditional_est <- data.frame(
@@ -778,23 +320,23 @@ outcome_regression_lib <- c("SL.glm", xgb_learners$names, rf_learners$names)
 # set up Super Learner library for treatment-assignment model (propensity score)
 propensity_lib <- c("SL.glm", xgb_learners$names, rf_learners$names)
 # set up Super Learner library for missing-data model
-miss_lib <- c("SL.glm", xgb_learners$names, rf_learners$names)
+miss_lib <- c("SL.glm.twostage", xgb_learners$names, rf_learners$names)
 
 # obtain marginal estimates using TMLE
 set.seed(20240227)
-marginal_tmlemto_ests <- subcalTMLE(
+marginal_tmlemto_ests <- twoStageTMLE(
   Y = data$Y, A = data$X, 
   # here, W refers to the completely-observed confounders, our "Z"
-  W = data[, "Z", drop = FALSE], 
-  # here, W.sub refers to the complete-case sample of missing-prone confounders
-  # (our W)
-  W.sub = obs_W, 
-  Delta.W = data$Delta,
+  W = data[, "Z", drop = FALSE], # need W to be a data.frame
+  # here, W.stage2 refers to the complete-case sample of missing-prone 
+  # confounders (our W)
+  W.stage2 = obs_W, Delta.W = data$Delta,
   condSetNames = c("W", "A", "Y"),
   pi.SL.library = miss_lib, V.pi = 10,
   Q.family = "binomial",
   Q.SL.library = outcome_regression_lib, V.Q = 10, 
   g.SL.library = propensity_lib, V.g = 10, 
+  augmentW = FALSE,
   verbose = FALSE
 )
 marginal_ests_tmlemto <- data.frame(
@@ -820,19 +362,21 @@ In this code chunk, we use the library of candidate learners defined in the prev
 # again, "A" corresponds to the exposure of interest
 msm_formula <- "A + Z + W_obs"
 set.seed(20240227)
-conditional_tmlemto_ests <- subcalTMLEMSM(
+conditional_tmlemto_ests <- twoStageTMLEmsm(
   Y = data$Y, A = data$X, 
   # here, W refers to the completely-observed confounders, our "Z"
   W = data[, "Z", drop = FALSE], # need W to be a data.frame
-  # here, W.sub refers to the complete-case sample of missing-prone confounders
+  # here, W.stage2 refers to the complete-case sample of missing-prone confounders
   # (our W)
-  W.sub = obs_W, V = data[, c("X", "Z", "W_obs")], Delta.W = data$Delta,
+  W.stage2 = obs_W, 
+  # V refers to the variables to condition on in the MSM
+  V = data[, c("X", "Z", "W_obs")], Delta.W = data$Delta,
   MSM = msm_formula, condSetNames = c("W", "A", "Y"),
   pi.SL.library = miss_lib, V.pi = 10,
   Q.family = "binomial",
   Q.SL.library = outcome_regression_lib, V.Q = 10, 
   g.SL.library = propensity_lib, V.g = 10, 
-  verbose = FALSE
+  augmentW = FALSE, verbose = FALSE
 )
 conditional_tmlemto_summary <- summary(conditional_tmlemto_ests$tmleMSM)$estimates[, 1:3]
 conditional_est_tmlemto <- data.frame(
@@ -893,393 +437,4 @@ est_se_diff %>%
 sessionInfo()
 ```
 
-# Appendix: utility functions for TMLE
-```{r utils-external}
-# utility functions for subcalTMLE ---------------------------------------------
-#--------------------------------------------------------------------------
-# Susan Gruber
-# sgruber@TLrevolution.com
-# August 10, 2023
-
-# functions for implementing a TMLE for subset calibration
-# (based  on two-stage TMLE Rose&vanderLaan, 2011)
-# that evaluates a point treatment effect or the marginal mean outcome for a
-# single arm study using a 2-stage sampling design
-#
-# For a two-arm study the full data consists of baseline covariates X, and 
-# potential outcomes Y0, Y1. Observed data consists of 
-# baseline covariates (W, Delta.W, Delta.W W'), treatment A, 
-# outcome (Delta, Delta Y), where covariates X can be divided into two sets: 
-# W measured on everyone, and W' measured on only a subset of individuals.  
-# Delta.W is an indicator of being in the selected subset. 
-# A is a unary (single-arm study) or binary treatment indicator, Delta indicates
-# whether the outcome is measured and DeltaY is the outcome value 
-# (when Delta = 1), otherwise missing.
-
-# The functions defined below take an initial observed dataset and transform it 
-# into a suitable representation for applying targeted maximum likelihood 
-# estimation (TMLE) using the tmle package (>= 2.0.0). 
-# Marginal parameter estimates (ATE/RD, RR, OR) can be obtained by calling 
-# the tmle function.
-# Conditional parameter estimates are obtained by calling the tmleMSM function. 
-# Note this requires specifying the desired MSM. Data on observations in the 
-# subset are passed in to these functions, along with sampling weights that 
-# account for the possibly biased selection into the sample.
-#
-# Step 1. Simple imputation of miscellaneous missing values in W + augment W 
-#       with binary indicators of which values were present/absent
-# Step 2. Construct inverse probability of censoring weights to pass into the 
-#         tmle or tmleMSM functions
-# 	2a. Model conditional probability of being included in the subset using 
-#       SuperLearner or logistic regression.
-# 	2b. Construct IP weights
-# Step 3. Call the tmle or tmleMSM function to evaluate the parameter, estimate 
-#         variance and CI bounds using influence curve-based inference.  
-#         Optionally, the tmle function can also provide targeted
-#         bootstrap-based variance estimates (recommended when there are near 
-#         positivity violations).
-#--------------------------------------------------------------------------
-
-# For NOW - no missing data allowed in W, W.sub
-#-------------------------------
-# Utilities
-summary.subcal <- function(object, ...) {
-  if (!is.null(object$coef)) {
-    picoef <- object$coef
-    if (inherits(picoef, "matrix")) {
-      piterms <- colnames(picoef)
-    } else {
-      piterms <- names(picoef)
-    }
-    pimodel <- paste("Delta.W ~ 1")
-    if (length(piterms) > 1) {
-      pimodel <- paste("Delta.W ~ ", paste(piterms, collapse = " + "))
-    }
-  } else {
-    pimodel <- piterms <- picoef <- NULL
-  }
-  return(list(
-    pimodel = pimodel, piterms = piterms, picoef = picoef, pitype = object$type,
-    pidiscreteSL = object$discreteSL
-  ))
-}
-
-print.summary.subcalTMLE <- function(x, ...) {
-  if (inherits(x, "summary.subcalTMLE")) {
-    cat("\n Estimation of Pi (subset sampling mechanism)\n")
-    cat("\t Procedure:", x$subcal$pitype)
-    if (!(is.null(x$subcal$pidiscreteSL))) {
-      if (x$subcal$pidiscreteSL) {
-        cat(", discrete")
-      } else {
-        cat(", ensemble")
-      }
-    }
-    if (!(is.null(x$subcal$piAUC))) {
-      cat("\t Empirical AUC =", round(x$subcal$piAUC, 4), "\n")
-    }
-    cat("\n")
-    if (!(is.na(x$subcal$picoef[1]))) {
-      cat("\t Model:\n\t\t", x$subcal$pimodel, "\n")
-      cat("\n\t Coefficients: \n")
-      terms <- sprintf("%15s", x$subcal$piterms)
-      extra <- ifelse(x$subcal$picoef >= 0, "  ", " ")
-      for (i in 1:length(x$subcal$picoef)) {
-        cat("\t", terms[i], extra[i], x$subcal$picoef[i], "\n")
-      }
-    }
-    cat("\n")
-    print(x$tmle)
-  }
-}
-
-print.subcalTMLE <- function(x, ...) {
-  cat("Subset calibration TMLE\n")
-  if (inherits(x, "subcalTMLE")) {
-    print(x$tmle)
-  }
-}
-
-summary.subcalTMLE <- function(x, ...) {
-  # summary for estimating Pi here
-  if (inherits(x, "subcalTMLE")) {
-    sum.subcalTMLE <- list()
-    sum.subcalTMLE$subcal <- summary.subcal(x$subcal)
-    sum.subcalTMLE$tmle <- summary(x$tmle)
-    class(sum.subcalTMLE) <- "summary.subcalTMLE"
-    return(sum.subcalTMLE)
-  }
-}
-
-#-----------------------------------------
-# Set the number of cross-validation
-# folds as a function of n.effective
-# See Phillips 2023 doi.org/10.1093/ije/dyad023
-#-----------------------------------------
-setV <- function(n.effective) {
-  if (n.effective <= 30) {
-    V <- n.effective
-  } else if (n.effective <= 500) {
-    V <- 20
-  } else if (n.effective <= 1000) {
-    V <- 10
-  } else if (n.effective <= 10000) {
-    V <- 5
-  } else {
-    V <- 2
-  }
-  return(V)
-}
-
-
-#----------------
-# construct column names
-#-----------------
-.getColNames <- function(condSetNames, Wnames, Vnames = NULL) {
-  orig.colnames <- NULL
-  for (i in 1:length(condSetNames)) {
-    # if (condSetNames[i] %in% c("A", "Y")) {
-    if (condSetNames[i] == "A") {
-      orig.colnames <- c(orig.colnames, condSetNames[i])
-    } else if (condSetNames[i] == "Y") {
-      orig.colnames <- c(orig.colnames, "real_Y")
-    } else if (condSetNames[i] == "W") {
-      orig.colnames <- c(orig.colnames, Wnames)
-    } else if (condSetNames[i] == "V") {
-      orig.colnames <- c(orig.colnames, Vnames)
-    }
-  }
-  return(orig.colnames)
-}
-
-#-------------------------
-# Function subcalTMLE
-# purpose: subset calibration TMLE
-# Arguments:
-#  	Y : outcome of interest (missingness allowed)
-# 	A : binary treatment indicator
-# 	W : matrix or data.frame of covariates measured on entire population
-# 	Delta.W : Indicator of inclusion in subset with additional information
-# 	W.sub : matrix or data.frame of covariates measured in subset population
-# 			  (in same order as the corresponding rows in W. DO NOT include
-# 			   rows for subjects not included in the subset)
-# 	Z : Only required when the goal is estimating a controlled direct effect
-# 		mediated by a binary variable,Z,  between treatment and outcome
-# 	Delta : binary indicator that outcome Y is observed
-# 	pi : optional vector of sampling probabilities
-# 	piform : optional parametric regression model for estimating pi
-# 	pi.SL.library : optional SL library specification for estimating pi 
-#     (ignored when piform or pi is provided)
-# 	V.pi : optional number of cross-validation folds for super learning 
-#     (ignored when piform or pi is provided)
-# 	pi.discreteSL: flag to indicate whether to use ensemble or discrete super 
-#     learning (ignored when piform or pi is provided)
-# 	condSet : variables to condition on when estimating pi. Covariates in W are 
-#     always included. Can optionally also condition on A and/or Y.
-# 	id : optional indicator of independent units of observation
-# 	Q.family : "gaussian" or "binomial", used to evaluate the TMLE
-# 	verbose : set to TRUE to print out informative messages
-# 	...	other arugments passed to the tmle function (see tmle help files)
-# Return value
-# 	object of class "subcalTMLE" (a list):
-# 	 subcal - a list of details on estimating the conditional sampling 
-#             probabilities
-# 	 pi - predicted probabilities
-# 	 coef - coefficients in the parametric model or SL ensemble weights
-# 	 type - "user-supplied regression formula" or "Super Learner"
-# 	 "discreteSL" - FALSE when ensemble SL used, TRUE when best single algorithm 
-#                   selected
-# 	 tmle - results returned from the call to the tmle function with
-# 		      observation weights equal to 1/pi. (class "tmle", see tmle package 
-#           documentation)
-#-------------------------
-subcalTMLE <- function(Y, A, W, Delta.W, W.sub, Z = NULL, 
-                       Delta = rep(1, length(Y)), pi = NULL, piform = NULL,
-                       pi.SL.library = c("SL.glm", "SL.gam", "SL.glmnet", 
-                                         "tmle.SL.dbarts.k.5"), V.pi = 10,
-                       pi.discreteSL = TRUE, condSetNames = c("A", "W"), 
-                       id = NULL, Q.family = "gaussian", verbose = FALSE, ...) {
-  if (!requireNamespace("tmle", versionCheck = ">=2.0", quietly = FALSE)) {
-    stop("Loading required tmle package (>=2.0) failed", call. = FALSE)
-  }
-  
-  if (is.null(id)) {
-    id <- 1:length(Y)
-  }
-  
-  if (is.vector(W.sub)) {
-    W.sub <- as.matrix(W.sub)
-    colnames(W.sub) <- "W.sub"
-  }
-  
-  # Evaluate conditional sampling probabilities
-  if (is.null(pi)) {
-    validCondSetNames <- c("A", "W", "Y")
-    if (!(all(condSetNames %in% validCondSetNames))) {
-      stop("condSetNames must be any combination of 'A', 'W', 'Y'")
-    }
-    if (any(condSetNames == "Y")) {
-      if (any(is.na(Y))) {
-        stop(paste0("Cannot condition on the outcome to evaluate sampling ",
-                    "probabilities when some outcome values are missing"))
-      }
-    }
-    
-    d.pi <- data.frame(Delta.W = Delta.W, mget(condSetNames))
-    colnames(d.pi)[-1] <- .getColNames(condSetNames, colnames(W))
-    res.subcal <- tmle:::estimateG(
-      d = d.pi, g1W = NULL, gform = piform, SL.library = pi.SL.library,
-      id = id, V = V.pi, message = "sampling weights", outcome = "Delta.W", 
-      discreteSL = pi.discreteSL,
-      obsWeights = rep(1, nrow(W)), verbose = verbose
-    )
-    names(res.subcal)[1] <- "pi"
-  } else {
-    res.subcal <- list()
-    res.subcal$pi <- pi
-    res.subcal$type <- "User supplied values"
-    res.subcal$coef <- NA
-    res.subcal$discreteSL <- NULL
-  }
-  
-  obsWeights <- Delta.W / res.subcal$pi
-  result <- list()
-  result$tmle <- try(tmle(Y[Delta.W == 1],
-                          A = A[Delta.W == 1], 
-                          W = cbind(W[Delta.W == 1, , drop = FALSE], W.sub), 
-                          Z = Z[Delta.W == 1],
-                          Delta = Delta[Delta.W == 1], 
-                          obsWeights = obsWeights[Delta.W == 1], 
-                          id = id[Delta.W == 1],
-                          family = Q.family, verbose = verbose, ...
-  ))
-  
-  if (inherits(result$tmle, "try-error")) {
-    cat(paste0("Error calling tmle. ", 
-               "Estimated sampling probabilites are being returned"))
-    result$tmle <- NULL
-  }
-  result$subcal <- res.subcal
-  class(result) <- "subcalTMLE" # for tmleMSM can use same class
-  return(result)
-}
-
-
-#-------------------------
-# Function subcalTMLEMSM
-# purpose: subset calibration TMLE for conditional effects
-# Arguments:
-#  	Y : outcome of interest (missingness allowed)
-# 	A : binary treatment indicator
-# 	W : matrix or data.frame of covariates measured on entire population
-# 	Delta.W : Indicator of inclusion in subset with additional information
-# 	W.sub : matrix or data.frame of covariates measured in subset population
-# 			  (in same order as the corresponding rows in W. DO NOT include
-# 			   rows for subjects not included in the subset)
-# 	Z : Only required when the goal is estimating a controlled direct effect
-# 		mediated by a binary variable,Z,  between treatment and outcome
-# 	Delta : binary indicator that outcome Y is observed
-# 	pi : optional vector of sampling probabilities
-# 	piform : optional parametric regression model for estimating pi
-# 	pi.SL.library : optional SL library specification for estimating pi 
-#     (ignored when piform or pi is provided)
-# 	V.pi : optional number of cross-validation folds for super learning 
-#     (ignored when piform or pi is provided)
-# 	pi.discreteSL: flag to indicate whether to use ensemble or discrete super 
-#     learning (ignored when piform or pi is provided)
-# 	condSet : variables to condition on when estimating pi. 
-#      Covariates in W are always included. Can optionally also condition on 
-#      A and/or Y.
-# 	id : optional indicator of independent units of observation
-# 	Q.family : "gaussian" or "binomial", used to evaluate the TMLE
-# 	verbose : set to TRUE to print out informative messages
-# 	...	other arugments passed to the tmleMSM function 
-#       (see tmleMSM documentation in the tmle package)
-# Return value
-# 	object of class "subcalTMLE" (a list):
-# 	 subcal - a list of details on estimating the conditional sampling 
-#             probabilities
-# 	 pi - predicted probabilities
-# 	 coef - coefficients in the parametric model or SL ensemble weights
-# 	 type - "user-supplied regression formula" or "Super Learner"
-# 	 "discreteSL" - FALSE when ensemble SL used, TRUE when best single algorithm 
-#                   selected
-# 	 tmle - results returned from the call to the tmleMSM function with
-# 		      observation weights equal to 1/pi. (class "tmleMSM", see tmle package 
-#           documentation)
-#-------------------------
-
-subcalTMLEMSM <- function(Y, A, W, V, Delta.W, W.sub, Delta = rep(1, length(Y)),
-                          pi = NULL, piform = NULL,
-                          pi.SL.library = c("SL.glm", "SL.gam", "SL.glmnet", 
-                                            "tmle.SL.dbarts.k.5"), 
-                          V.pi = 10,
-                          pi.discreteSL = TRUE, condSetNames = c("A", "W"), 
-                          id = NULL, Q.family = "gaussian", verbose = FALSE, 
-                          ...) {
-  if (!requireNamespace("tmle", versionCheck = ">=2.0", quietly = FALSE)) {
-    stop("Loading required tmle package (>-2.0) failed", call. = FALSE)
-  }
-  
-  if (is.null(id)) {
-    id <- 1:length(Y)
-  }
-  
-  if (is.vector(W.sub)) {
-    W.sub <- as.matrix(W.sub)
-    colnames(W.sub) <- "W.sub"
-  }
-  V <- as.matrix(V)
-  
-  # Evaluate conditional sampling probabilities
-  if (is.null(pi)) {
-    validCondSetNames <- c("A", "V", "W", "Y")
-    if (!(all(condSetNames %in% validCondSetNames))) {
-      stop("condSetNames must be any combination of 'A', 'V', 'W', 'Y'")
-    }
-    if (any(condSetNames == "Y")) {
-      if (any(is.na(Y))) {
-        stop(paste0("Cannot condition on the outcome to evaluate sampling ", 
-                    "probabilities when some outcome values are missing"))
-      }
-    }
-    
-    d.pi <- data.frame(Delta.W = Delta.W, mget(condSetNames))
-    colnames(d.pi)[-1] <- .getColNames(condSetNames, colnames(W), colnames(V))
-    res.subcal <- tmle:::estimateG(
-      d = d.pi, g1W = NULL, gform = piform, SL.library = pi.SL.library,
-      id = id, V = V.pi, message = "sampling weights", outcome = "A", 
-      discreteSL = pi.discreteSL,
-      obsWeights = rep(1, nrow(W)), verbose = verbose
-    )
-    names(res.subcal)[1] <- "pi"
-  } else {
-    res.subcal <- list()
-    res.subcal$pi <- pi
-    res.subcal$type <- "User supplied values"
-    res.subcal$coef <- NA
-    res.subcal$discreteSL <- NULL
-  }
-  
-  obsWeights <- Delta.W / res.subcal$pi
-  
-  result <- list()
-  result$tmleMSM <- try(tmleMSM(
-    Y = Y[Delta.W == 1], A = A[Delta.W == 1], 
-    W = cbind(W[Delta.W == 1, , drop = FALSE], W.sub),
-    V = V[Delta.W == 1, , drop = FALSE], Delta = Delta[Delta.W == 1], 
-    family = Q.family, obsWeights = obsWeights[Delta.W == 1], 
-    id = id[Delta.W == 1], verbose = verbose, ...
-  ))
-  
-  if (inherits(result$tmleMSM, "try-error")) {
-    cat(paste0("Error calling tmleMSM. ", 
-               "Estimated sampling probabilites are being returned"))
-    result$tmleMSM <- NULL
-  }
-  result$subcal <- res.subcal
-  class(result) <- "subcalTMLE" # for tmleMSM can use same class
-  return(result)
-}
-```
 # References
