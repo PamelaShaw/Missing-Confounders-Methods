@@ -1,5 +1,5 @@
 # Missing-Confounders-Methods
-This is a repository of code for the paper "Assessing treatment effects in observational data with missing confounders: A comparative study of practical doubly-robust and traditional missing data methods" currently under development as part of the FDA Sentinel Initiative (https://www.fda.gov/safety/fdas-sentinel-initiative). The paper can be found [here]().
+This is a repository of code for the paper "Assessing treatment effects in observational data with missing confounders: A comparative study of practical doubly-robust and traditional missing data methods" currently under development as part of the FDA Sentinel Initiative (https://www.fda.gov/safety/fdas-sentinel-initiative). The paper can be found at https://arxiv.org/abs/2412.15012.
 
 ## reports
 
