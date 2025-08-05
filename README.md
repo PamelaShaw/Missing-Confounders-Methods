@@ -7,7 +7,7 @@ This directory contains tables of simulation results; some tables are repeated f
 
 ## sims
 
-This directory contains the code that we used to run simulations, and a script that reproduces one of the synthetic-data results in the manuscript. Please see the README for more details.
+This directory contains the code that we used to run simulations, and a script that reproduces one of the synthetic-data results in the manuscript. Please see [sims/README](https://github.com/PamelaShaw/Missing-Confounders-Methods/blob/main/sims/README.md) for more details.
 
 ## vignettes
 
